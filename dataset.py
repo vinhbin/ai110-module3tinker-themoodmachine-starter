@@ -23,6 +23,24 @@ POSITIVE_WORDS = [
     "chill",
     "relaxed",
     "amazing",
+    # Added in Part 1/2: common praise words and informal positives.
+    "proud",
+    "hopeful",
+    "grateful",
+    "wonderful",
+    "fantastic",
+    "perfect",
+    "lit",          # slang: exciting / great
+    "vibes",        # slang: usually positive ("good vibes")
+    # Part 3 targeted fix: positive slang the model was missing (scored 0).
+    "fire",         # slang: "this is fire" = great (the WORD, not just 🔥)
+    "sick",         # slang: "that's sick" = awesome (ambiguous! see limitations)
+    "slaps",        # slang: "the soundtrack slaps" = really good
+    "goated",       # slang: greatest of all time
+    ":)",           # emoji handled as its own token in preprocess()
+    "😂",
+    "🥰",
+    "🔥",           # slang/emoji: "fire" = great
 ]
 
 NEGATIVE_WORDS = [
@@ -36,6 +54,18 @@ NEGATIVE_WORDS = [
     "stressed",
     "hate",
     "boring",
+    # Added in Part 1/2: stronger/weaker negatives and informal negatives.
+    "exhausted",
+    "annoyed",
+    "anxious",
+    "disappointed",
+    "worst",
+    "horrible",
+    "miserable",
+    "ugh",          # slang interjection signaling frustration
+    ":(",
+    "😭",
+    "💀",           # ambiguous slang; here treated as negative ("dead/done")
 ]
 
 # ---------------------------------------------------------------------
@@ -50,6 +80,16 @@ SAMPLE_POSTS = [
     "This is fine",
     "So excited for the weekend",
     "I am not happy about this",
+    # ---- New posts added in Part 1 ----
+    "Lowkey stressed but kind of proud of myself",
+    "This new album is straight fire 🔥",
+    "Oh great, another Monday meeting that could've been an email",
+    "I'm fine 🙂",
+    "Wow I just LOVE getting stuck in traffic for two hours",
+    "ugh my wifi died right before the deadline 💀",
+    "Honestly today was just okay, nothing special",
+    "Exhausted from finals but so grateful it's finally over",
+    "not gonna lie this movie was kinda bad but the soundtrack slaps",
 ]
 
 # Human labels for each post above.
@@ -65,30 +105,33 @@ TRUE_LABELS = [
     "neutral",   # "This is fine"
     "positive",  # "So excited for the weekend"
     "negative",  # "I am not happy about this"
+    # ---- New labels added in Part 1 (must stay aligned with SAMPLE_POSTS) ----
+    "mixed",     # "Lowkey stressed but kind of proud of myself" -> stress + pride
+    "positive",  # "This new album is straight fire 🔥" -> slang "fire" = great
+    "negative",  # "Oh great, another Monday meeting..." -> SARCASM (edge case)
+    "neutral",   # "I'm fine 🙂" -> deliberately ambiguous; could be masked sadness
+    "negative",  # "Wow I just LOVE getting stuck in traffic..." -> SARCASM (edge case)
+    "negative",  # "ugh my wifi died right before the deadline 💀" -> frustration
+    "neutral",   # "Honestly today was just okay, nothing special" -> flat tone
+    "mixed",     # "Exhausted from finals but so grateful it's over" -> tired + grateful
+    "mixed",     # "this movie was kinda bad but the soundtrack slaps" -> con + pro
 ]
+#
+# EDGE CASES we (and a friend) might disagree on:
+#   - "I'm fine 🙂"            : labeled neutral, but the smiley over "fine" can
+#                                read as passive-aggressive / quietly negative.
+#   - "Oh great, ... email"    : labeled negative because it's sarcasm, but the
+#                                literal word "great" makes a keyword model say
+#                                positive. Classic rule-based failure.
+#   - "Wow I just LOVE ..."    : same sarcasm trap as above ("love" is positive
+#                                literally, negative in intent).
+#
+# These are exactly the rows we expect the rule-based model to get wrong in
+# Part 3 / Part 4.
 
-# TODO: Add 5-10 more posts and labels.
-#
-# Requirements:
-#   - For every new post you add to SAMPLE_POSTS, you must add one
-#     matching label to TRUE_LABELS.
-#   - SAMPLE_POSTS and TRUE_LABELS must always have the same length.
-#   - Include a variety of language styles, such as:
-#       * Slang ("lowkey", "highkey", "no cap")
-#       * Emojis (":)", ":(", "🥲", "😂", "💀")
-#       * Sarcasm ("I absolutely love getting stuck in traffic")
-#       * Ambiguous or mixed feelings
-#
-# Tips:
-#   - Try to create some examples that are hard to label even for you.
-#   - Make a note of any examples that you and a friend might disagree on.
-#     Those "edge cases" are interesting to inspect for both the rule based
-#     and ML models.
-#
-# Example of how you might extend the lists:
-#
-# SAMPLE_POSTS.append("Lowkey stressed but kind of proud of myself")
-# TRUE_LABELS.append("mixed")
-#
-# Remember to keep them aligned:
-#   len(SAMPLE_POSTS) == len(TRUE_LABELS)
+# Safety check: the program (and ML training) will crash later if these two
+# lists ever drift out of alignment, so assert it right where the data lives.
+assert len(SAMPLE_POSTS) == len(TRUE_LABELS), (
+    f"SAMPLE_POSTS ({len(SAMPLE_POSTS)}) and TRUE_LABELS "
+    f"({len(TRUE_LABELS)}) must have the same length."
+)

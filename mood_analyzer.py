@@ -9,9 +9,34 @@ This class starts with very simple logic:
   - Convert that score into a mood label
 """
 
+import re
 from typing import List, Dict, Tuple, Optional
 
 from dataset import POSITIVE_WORDS, NEGATIVE_WORDS
+
+
+# Words that flip the meaning of the next sentiment word ("not happy").
+NEGATION_WORDS = {"not", "no", "never", "n't", "dont", "cant", "wont"}
+
+# A few words carry stronger feeling than a generic hit, so weight them.
+# (value = points added/subtracted instead of the default 1)
+WORD_WEIGHTS = {
+    "love": 2,
+    "amazing": 2,
+    "awesome": 2,
+    "perfect": 2,
+    "fantastic": 2,
+    "hate": 2,
+    "terrible": 2,
+    "awful": 2,
+    "horrible": 2,
+    "worst": 2,
+    "miserable": 2,
+}
+
+# Emoji / punctuation "tokens" we want preprocess() to keep as standalone
+# signals instead of stripping them away with the rest of the punctuation.
+EMOTICONS = {":)", ":-)", ":(", ":-(", ":/", ":')"}
 
 
 class MoodAnalyzer:
@@ -40,50 +65,120 @@ class MoodAnalyzer:
         """
         Convert raw text into a list of tokens the model can work with.
 
-        TODO: Improve this method.
+        Steps (in order):
+          1. Lowercase and strip outer whitespace.
+          2. Split on whitespace into rough tokens.
+          3. For each token, keep emoticons (":)", ":(") and emoji characters
+             as their own signal tokens, but strip surrounding punctuation off
+             of normal words ("traffic," -> "traffic", "love!!!" -> "love").
+          4. Collapse runs of 3+ repeated letters ("soooo" -> "soo") so
+             "loveee" still matches "love".
 
-        Right now, it does the minimum:
-          - Strips leading and trailing whitespace
-          - Converts everything to lowercase
-          - Splits on spaces
-
-        Ideas to improve:
-          - Remove punctuation
-          - Handle simple emojis separately (":)", ":-(", "🥲", "😂")
-          - Normalize repeated characters ("soooo" -> "soo")
+        Returns a flat list of tokens. We intentionally KEEP emojis instead of
+        deleting them, because this dataset uses 🔥 / 💀 / 🙂 as mood signals.
         """
         cleaned = text.strip().lower()
-        tokens = cleaned.split()
+        raw_tokens = cleaned.split()
+
+        tokens: List[str] = []
+        for raw in raw_tokens:
+            # Keep known text emoticons exactly as-is.
+            if raw in EMOTICONS:
+                tokens.append(raw)
+                continue
+
+            # Pull any single-codepoint emoji out as their own tokens so a word
+            # glued to an emoji ("fire🔥") still yields both "fire" and "🔥".
+            for ch in raw:
+                if self._is_emoji(ch):
+                    tokens.append(ch)
+
+            # Strip emoji + punctuation from the word, keeping letters/digits
+            # and apostrophes (so "don't" survives as "don't").
+            word = "".join(
+                ch for ch in raw
+                if (ch.isalnum() or ch == "'") and not self._is_emoji(ch)
+            )
+            # Normalize stretched spelling: 3+ repeats -> 2 ("soooo" -> "soo").
+            word = re.sub(r"(.)\1{2,}", r"\1\1", word)
+            if word:
+                tokens.append(word)
 
         return tokens
+
+    @staticmethod
+    def _is_emoji(ch: str) -> bool:
+        """True for emoji-range codepoints we care about (rough but enough)."""
+        return ord(ch) >= 0x1F000 or ch in {"❤", "✅"}
 
     # ---------------------------------------------------------------------
     # Scoring logic
     # ---------------------------------------------------------------------
 
+    def _analyze(self, text: str) -> Tuple[int, List[str], List[str]]:
+        """
+        Core scoring routine shared by score_text(), predict_label(), and
+        explain() so they can never disagree with each other.
+
+        Returns (score, positive_hits, negative_hits).
+
+        Enhancements implemented (Part 2):
+          * Word weighting  -- strong words like "love"/"hate" count for 2,
+            everything else counts for 1 (see WORD_WEIGHTS).
+          * Negation        -- a negation word ("not", "never", "n't") flips
+            the sign of the NEXT sentiment word, so "not happy" scores -1 and
+            "not bad" scores +1.
+          * Repeated words   -- each occurrence counts, so "love love love"
+            scores higher than a single "love".
+        """
+        tokens = self.preprocess(text)
+
+        score = 0
+        positive_hits: List[str] = []
+        negative_hits: List[str] = []
+        negate = False  # set True right after we see a negation word
+
+        for token in tokens:
+            if token in NEGATION_WORDS:
+                negate = True
+                continue
+
+            weight = WORD_WEIGHTS.get(token, 1)
+
+            if token in self.positive_words:
+                if negate:
+                    score -= weight
+                    negative_hits.append(f"not+{token}")
+                else:
+                    score += weight
+                    positive_hits.append(token)
+            elif token in self.negative_words:
+                if negate:
+                    score += weight
+                    positive_hits.append(f"not+{token}")
+                else:
+                    score -= weight
+                    negative_hits.append(token)
+            else:
+                # A non-sentiment word in between cancels a dangling negation,
+                # so "not really that happy" doesn't flip "happy".
+                negate = False
+                continue
+
+            # Negation only applies to the single next sentiment word.
+            negate = False
+
+        return score, positive_hits, negative_hits
+
     def score_text(self, text: str) -> int:
         """
         Compute a numeric "mood score" for the given text.
 
-        Positive words increase the score.
-        Negative words decrease the score.
-
-        TODO: You must choose AT LEAST ONE modeling improvement to implement.
-        For example:
-          - Handle simple negation such as "not happy" or "not bad"
-          - Count how many times each word appears instead of just presence
-          - Give some words higher weights than others (for example "hate" < "annoyed")
-          - Treat emojis or slang (":)", "lol", "💀") as strong signals
+        Positive words increase the score, negative words decrease it, and
+        the enhancements described in _analyze() (weighting + negation) apply.
         """
-        # TODO: Implement this method.
-        #   1. Call self.preprocess(text) to get tokens.
-        #   2. Loop over the tokens.
-        #   3. Increase the score for positive words, decrease for negative words.
-        #   4. Return the total score.
-        #
-        # Hint: if you implement negation, you may want to look at pairs of tokens,
-        # like ("not", "happy") or ("never", "fun").
-        pass
+        score, _positive_hits, _negative_hits = self._analyze(text)
+        return score
 
     # ---------------------------------------------------------------------
     # Label prediction
@@ -98,19 +193,29 @@ class MoodAnalyzer:
           - score < 0  -> "negative"
           - score == 0 -> "neutral"
 
-        TODO: You can adjust this mapping if it makes sense for your model.
-        For example:
-          - Use different thresholds (for example score >= 2 to be "positive")
-          - Add a "mixed" label for scores close to zero
-        Just remember that whatever labels you return should match the labels
-        you use in TRUE_LABELS in dataset.py if you care about accuracy.
+        Our mapping (Part 2 threshold choices):
+          - score > 0                     -> "positive"
+          - score < 0                     -> "negative"
+          - score == 0 AND both a positive
+            and negative signal were seen -> "mixed"
+          - score == 0 with no signals
+            (or signals that cancel)       -> "neutral"
+
+        The "mixed" vs "neutral" split matters: "exhausted but grateful" and
+        "this is fine" can both score 0, but they are not the same mood. We
+        use the presence of *opposing* hits to tell them apart.
         """
-        # TODO: Implement this method.
-        #   1. Call self.score_text(text) to get the numeric score.
-        #   2. Return "positive" if the score is above 0.
-        #   3. Return "negative" if the score is below 0.
-        #   4. Return "neutral" otherwise.
-        pass
+        score, positive_hits, negative_hits = self._analyze(text)
+
+        if score > 0:
+            return "positive"
+        if score < 0:
+            return "negative"
+
+        # score == 0 here: distinguish a real tug-of-war from a flat statement.
+        if positive_hits and negative_hits:
+            return "mixed"
+        return "neutral"
 
     # ---------------------------------------------------------------------
     # Explanations (optional but recommended)
@@ -129,22 +234,12 @@ class MoodAnalyzer:
         Example explanation (your exact wording can be different):
           'Score = 2 (positive words: ["love", "great"]; negative words: [])'
 
-        The current implementation is a placeholder so the code runs even
-        before you implement it.
+        Uses the same _analyze() routine as score_text()/predict_label(), so
+        the explanation always matches the actual decision (negation and word
+        weighting included). Hits prefixed with "not+" were flipped by a
+        preceding negation word.
         """
-        tokens = self.preprocess(text)
-
-        positive_hits: List[str] = []
-        negative_hits: List[str] = []
-        score = 0
-
-        for token in tokens:
-            if token in self.positive_words:
-                positive_hits.append(token)
-                score += 1
-            if token in self.negative_words:
-                negative_hits.append(token)
-                score -= 1
+        score, positive_hits, negative_hits = self._analyze(text)
 
         return (
             f"Score = {score} "

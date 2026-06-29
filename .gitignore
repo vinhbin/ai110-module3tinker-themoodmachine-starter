@@ -1,0 +1,6 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# TF-private answer key — never push to the (possibly student-visible) fork
+tf_notes.md
